@@ -35,6 +35,7 @@ import minqlx
 import datetime
 import time
 import threading
+from distutils.version import StrictVersion
 
 class timer():
     def __init__(self, running=False):
