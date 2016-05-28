@@ -35,7 +35,6 @@ import minqlx
 import datetime
 import time
 import threading
-from distutils.version import StrictVersion
 
 class timer():
     def __init__(self, running=False):
@@ -76,9 +75,9 @@ class uneventeams(minqlx.Plugin):
         self.add_hook("team_switch", self.handle_team_switch)
         self.add_hook("player_disconnect", self.handle_player_disconnect)
         self.add_hook("round_start", self.handle_round_start)
-        self.add_hook("round_end", self.handle_round_end)
+        #self.add_hook("round_end", self.handle_round_end)
         self.add_hook("round_countdown", self.handle_round_countdown)
-        self.add_hook("game_end", self.handle_game_end)
+        #self.add_hook("game_end", self.handle_game_end)
         self.add_command("playertimes", self.cmd_playertimes, 2)
         
         # { steam_id : time_played }
@@ -99,8 +98,10 @@ class uneventeams(minqlx.Plugin):
         
         for p in players["red"]:
             self._players[p.steam_id] = timer()
+            self._players[p.steam_id].start()
         for p in players["blue"]:
             self._players[p.steam_id] = timer()
+            self._players[p.steam_id].start()
         for p in players["spectator"]:
             self._players[p.steam_id] = timer()
     
@@ -134,12 +135,6 @@ class uneventeams(minqlx.Plugin):
         
         teams = self.teams()
         
-        for p in teams["red"]:
-            self._players[p.steam_id].start()
-        
-        for p in teams["blue"]:
-            self._players[p.steam_id].start()
-        
         for p in self._players.keys():
             try: 
                 self.player(p)
@@ -161,7 +156,12 @@ class uneventeams(minqlx.Plugin):
             self.msg("^1Uneven Teams^7 >> {}^7 was slain.".format(guy.name))
         if action == 1:
             guy.put("spectator")
-            self.msg("^1Uneven Teams^7 >> {}^7 was moved to spectators.".format(guy.name))
+            try:
+                queue = minqlx.Plugin._loaded_plugins['queue']
+                queue.addToQueue(guy, 0)
+                self.msg("^1Uneven Teams^7 >> {}^7 was moved to queue.".format(guy.name))
+            except:
+                self.msg("^1Uneven Teams^7 >> {}^7 was moved to spectators.".format(guy.name))
         
     def handle_round_end(self, round_number):
         '''
@@ -264,3 +264,5 @@ class uneventeams(minqlx.Plugin):
         
         if player.steam_id in self._players.keys():
             removing()
+            
+            

@@ -46,7 +46,6 @@ class queue(minqlx.Plugin):
         self.add_command("qpush", self.cmd_qpush, 5)
         self.add_command("qadd", self.cmd_qadd, 5)
         
-        self.plugin_version = "2.0"
         self._queue = []
         self._afk   = []
         self._tags  = []
@@ -87,7 +86,10 @@ class queue(minqlx.Plugin):
         @minqlx.next_frame
         def pushToTeam(amount, team):
             for count, player in enumerate(self._queue):
-                self._queue.pop(0).put(team)
+                if player in self.teams()['spectator']:
+                    self._queue.pop(0).put(team)
+                else:
+                    self.remFromQueue(player)
                 if count == amount - 1:
                     self.pushFromQueue()
                     return
@@ -96,8 +98,14 @@ class queue(minqlx.Plugin):
         def pushToBoth(times):
             ### TODO ###
             while len(self._queue) > 1:
-                self._queue.pop(0).put("red")
-                self._queue.pop(0).put("blue")
+                if self._queue[0] in self.teams()['spectator']:
+                    if self._queue[1] in self.teams()['spectator']:
+                        self._queue.pop(0).put("red")
+                        self._queue.pop(0).put("blue")
+                    else:
+                        self.remFromQueue(self._queue[1])
+                else:
+                    self.remFromQueue(self._queue[0])
                 self.pushFromQueue()
         
         time.sleep(delay)
