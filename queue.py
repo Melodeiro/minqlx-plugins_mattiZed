@@ -12,14 +12,20 @@
 # Some parts of it were inspired by the original queueinfo plugin which was
 # written by WalkerX (github) for the old minqlbot.
 
-# The plugin basically shows for how long people have been waiting in spectator
-# mode. If a player joins a team, the name is kept for three minutes (so admins
-# can track players that dont respect the queue) in the list but now displayed
-# with an asterisk to show that the player has left the queue and will soon be
-# removed.
+# The plugin put players to the queue when teams are full or even if match in progress.
+# When more players adding or there is the place for someone, guys from queue putting to the game.
+# 
 
 # The plugin also features an AFK list, to which players can 
 # subscribe/unsubscribe to.
+
+# Its the alpha state, and currently known 2 bugs:
+# - when players spaming join and spec, some players might be temporary renamed;
+# - a lot of client_command's might create lags (probably because set_configstring handling
+#   isn't optimised yet)
+
+# For correctly updating the player tags after using !clan, 
+# server needs changed clan.py: http://pastebin.com/3zskZmKb
 
 import minqlx
 import datetime
@@ -39,18 +45,22 @@ class queue(minqlx.Plugin):
         self.add_hook("client_command", self.handle_client_command)
         self.add_hook("vote_ended", self.handle_vote_ended)
         self.add_hook("new_game", self.handle_new_game)
+        self.add_hook("game_end", self.handle_game_end)
         self.add_command(("q", "queue"), self.cmd_lq)
         self.add_command("afk", self.cmd_afk)
         self.add_command("here", self.cmd_playing)
+        self.add_command("qversion", self.cmd_qversion)
         self.add_command(("teamsize", "ts"), self.cmd_teamsize, 2, usage="<size>", priority=minqlx.PRI_HIGH)
         self.add_command("qpush", self.cmd_qpush, 5)
         self.add_command("qadd", self.cmd_qadd, 5)
         
+        self.version = "2.1"
         self._queue = []
         self._afk   = []
         self._tags  = []
         self.initialize()
-        
+        self.is_endscreen = False ######## TODO: replace for something better, because 
+                                  ######## loading during the endgame screen might cause bugs
         self.set_cvar_once("qlx_queueSetAfkPermission", "2")
         self.set_cvar_once("qlx_queueAFKTag", "^3AFK")
     
@@ -59,6 +69,7 @@ class queue(minqlx.Plugin):
             self.updTag(p)
     
     ## Basic List Handling (Queue and AFK)
+    @minqlx.thread
     def addToQueue(self, player, pos=-1):
         '''Safely adds players to the queue'''
         if player not in self._queue:
@@ -69,7 +80,7 @@ class queue(minqlx.Plugin):
                 for p in self._queue:
                     self.updTag(p)
         if player in self._queue:
-            minqlx.send_server_command(player.id, "cp \"You are in the queue to play\"")
+            self.center_print(player, "You are set to spectate only")
         self.updTag(player)
         self.pushFromQueue()
     
@@ -113,6 +124,8 @@ class queue(minqlx.Plugin):
             return
         if self.game.state != 'in_progress' and self.game.state != 'warmup':
             return
+        if self.is_endscreen:
+            return
             
         ts = int(self.game.teamsize)
         teams = self.teams()
@@ -142,7 +155,7 @@ class queue(minqlx.Plugin):
         '''Safely removes players from afk list'''
         if player in self._afk:
             self._afk.remove(player)
-        self.updTag(player)
+            self.updTag(player)
     
     def posInQueue(self, player):
         '''Returns position of the player in queue'''
@@ -189,16 +202,19 @@ class queue(minqlx.Plugin):
     @minqlx.thread
     def updTag(self, player):
         '''Start the set_configstring event'''
-        player.clan = player.clan
+        if player in self.players():
+            player.clan = player.clan
+    
+    @minqlx.next_frame
+    def center_print(self, player, message):
+        minqlx.send_server_command(player.id, "cp \"{}\"".format(message))
     
     ## Plugin Handles and Commands
-    #@minqlx.thread <- will cause return warnings
     def handle_player_disconnect(self, player, reason):
         self.remAFK(player)
         self.remFromQueue(player)
-        self.pushFromQueue()
+        self.pushFromQueue(0.1)
     
-    #@minqlx.thread
     def handle_team_switch(self, player, old_team, new_team):
         if new_team != "spectator":
             self.remFromQueue(player)
@@ -206,7 +222,6 @@ class queue(minqlx.Plugin):
         else:
             self.pushFromQueue()
             
-    #@minqlx.thread
     def handle_team_switch_attempt(self, player, old_team, new_team):
         if new_team != "spectator" and old_team == "spectator":
             teams = self.teams();
@@ -221,15 +236,18 @@ class queue(minqlx.Plugin):
                     
     def cmd_qadd(self, player, msg, channel):
         self.addToQueue(player)
+        
+    def cmd_qversion(self, player, msg, channel):
+        channel.reply('^3This server has ^5queue.py ^6{} ^3ver. installed.'.format(self.version))
     
-    #@minqlx.thread <- will cause return warnings
     def handle_client_command(self, player, command):
-        if command == "team s" and player in self.teams()['spectator']:
-            self.remFromQueue(player)
-            if player not in self._queue:
-                minqlx.send_server_command(player.id, "cp \"You are set to spectate only\"")
+        @minqlx.thread
+        def handler():
+            if command == "team s" and player in self.teams()['spectator']:
+                self.remFromQueue(player)
+                if player not in self._queue:
+                    self.center_print(player, "You are set to spectate only")
     
-    #@minqlx.thread
     def handle_vote_ended(self, votes, vote, args, passed):
         if vote == "teamsize":
             time.sleep(4)
@@ -253,7 +271,11 @@ class queue(minqlx.Plugin):
             return new_cs
     
     def handle_new_game(self):
+        self.is_endscreen = False
         self.pushFromQueue()
+        
+    def handle_game_end(self, data):
+        self.is_endscreen = True
     
     def cmd_lq(self, player, msg, channel):
         msg = "^7No one in queue."
