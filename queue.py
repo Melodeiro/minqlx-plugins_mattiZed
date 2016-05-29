@@ -1,5 +1,6 @@
 # This is an extension plugin  for minqlx.
 # Copyright (C) 2016 mattiZed (github) aka mattiZed (ql)
+# Copyright (C) 2016 Melodeiro (github)
 
 # You can redistribute it and/or modify it under the terms of the 
 # GNU General Public License as published by the Free Software Foundation, 
@@ -19,10 +20,7 @@
 # The plugin also features an AFK list, to which players can 
 # subscribe/unsubscribe to.
 
-# Its the alpha state, and currently known 2 bugs:
-# - when players spaming join and spec, some players might be temporary renamed;
-# - a lot of client_command's might create lags (probably because set_configstring handling
-#   isn't optimised yet)
+# Its the alpha state, so any bugs might happen
 
 # For correctly updating the player tags after using !clan, 
 # server needs changed clan.py: http://pastebin.com/3zskZmKb
@@ -38,10 +36,11 @@ _tag_key = "minqlx:players:{}:clantag"
 
 class queue(minqlx.Plugin):
     def __init__(self):
+        self.add_hook("player_loaded", self.handle_player_loaded)
         self.add_hook("player_disconnect", self.handle_player_disconnect)
         self.add_hook("team_switch", self.handle_team_switch)
         self.add_hook("team_switch_attempt", self.handle_team_switch_attempt)
-        self.add_hook("set_configstring", self.handle_configstring, priority=minqlx.PRI_LOW)
+        self.add_hook("set_configstring", self.handle_configstring, priority=minqlx.PRI_HIGH)
         self.add_hook("client_command", self.handle_client_command)
         self.add_hook("vote_ended", self.handle_vote_ended)
         self.add_hook("new_game", self.handle_new_game)
@@ -53,11 +52,12 @@ class queue(minqlx.Plugin):
         self.add_command(("teamsize", "ts"), self.cmd_teamsize, 2, usage="<size>", priority=minqlx.PRI_HIGH)
         self.add_command("qpush", self.cmd_qpush, 5)
         self.add_command("qadd", self.cmd_qadd, 5)
+        self.add_command("qupd", self.cmd_qupd, 5)
         
-        self.version = "2.1"
+        self.version = "2.2"
         self._queue = []
         self._afk   = []
-        self._tags  = []
+        self._tags  = {}
         self.initialize()
         self.is_endscreen = False ######## TODO: replace for something better, because 
                                   ######## loading during the endgame screen might cause bugs
@@ -80,7 +80,7 @@ class queue(minqlx.Plugin):
                 for p in self._queue:
                     self.updTag(p)
         if player in self._queue:
-            self.center_print(player, "You are set to spectate only")
+            self.center_print(player, "You are in the queue to play")
         self.updTag(player)
         self.pushFromQueue()
     
@@ -90,12 +90,14 @@ class queue(minqlx.Plugin):
             self._queue.remove(player)
         for p in self._queue:
             self.updTag(p)
+        self.updTag(player)
     
     @minqlx.thread
     def pushFromQueue(self, delay=0):
         '''Check if there is the place and players in queue, and put them in the game'''
         @minqlx.next_frame
         def pushToTeam(amount, team):
+            '''Safely put certain amout of players to the selected team'''
             for count, player in enumerate(self._queue):
                 if player in self.teams()['spectator']:
                     self._queue.pop(0).put(team)
@@ -170,39 +172,30 @@ class queue(minqlx.Plugin):
         if player in self.teams()['spectator'] and player not in self._afk:
             self._afk.append(player)
             self.remFromQueue(player)
-            self.updTag(player)
             return True
         return False
     
-    def getTag(self, player):
-        '''Sets the player's clantag to AFK, queue number or just (s)'''
-        tag_key = _tag_key.format(player.steam_id)
-        tag = ""
-        if tag_key in self.db:
-            tag = self.db[tag_key]
-            
-        addition = ""
-        position = self.posInQueue(player)
-        if position > -1:
-            addition = position + 1
-        elif player in self._afk:
-            addition = self.get_cvar("qlx_queueAFKTag")
-        elif player in self.teams()['spectator']:
-            addition = 's'
-        else:
-            return tag
-        
-        if len(tag) > 0 and addition:
-            tag = '({}) {}'.format(addition, tag)
-        else:
-            tag = '({}){}'.format(addition, tag)
-        
-        return tag
+    @minqlx.thread    
+    def remTag(self, player):
+        if player.steam_id in self._tags:
+            del self._tags[player.steam_id]
     
     @minqlx.thread
     def updTag(self, player):
-        '''Start the set_configstring event'''
+        '''Update the tags dictionary and start the set_configstring event for tag to apply'''
         if player in self.players():
+                
+            addition = ""
+            position = self.posInQueue(player)
+            if position > -1:
+                addition = '({})'.format(position + 1)
+            elif player in self._afk:
+                addition = '({})'.format(self.get_cvar("qlx_queueAFKTag"))
+            elif player in self.teams()['spectator']:
+                addition = '(s)'
+                
+            self._tags[player.steam_id] = addition
+                
             player.clan = player.clan
     
     @minqlx.next_frame
@@ -213,7 +206,11 @@ class queue(minqlx.Plugin):
     def handle_player_disconnect(self, player, reason):
         self.remAFK(player)
         self.remFromQueue(player)
+        self.remTag(player)
         self.pushFromQueue(0.1)
+    
+    def handle_player_loaded(self, player):
+        self.updTag(player)
     
     def handle_team_switch(self, player, old_team, new_team):
         if new_team != "spectator":
@@ -222,6 +219,8 @@ class queue(minqlx.Plugin):
         else:
             self.pushFromQueue()
             
+        self.updTag(player)
+        
     def handle_team_switch_attempt(self, player, old_team, new_team):
         if new_team != "spectator" and old_team == "spectator":
             teams = self.teams();
@@ -236,17 +235,25 @@ class queue(minqlx.Plugin):
                     
     def cmd_qadd(self, player, msg, channel):
         self.addToQueue(player)
+                    
+    def cmd_qupd(self, player, msg, channel):
+        self.updTag(player)
         
     def cmd_qversion(self, player, msg, channel):
         channel.reply('^3This server has ^5queue.py ^6{} ^3ver. installed.'.format(self.version))
     
+    
+    
     def handle_client_command(self, player, command):
         @minqlx.thread
         def handler():
-            if command == "team s" and player in self.teams()['spectator']:
-                self.remFromQueue(player)
-                if player not in self._queue:
-                    self.center_print(player, "You are set to spectate only")
+            if command == "team s":
+                if player in self.teams()['spectator']:
+                    self.remFromQueue(player)
+                    if player not in self._queue:
+                        self.center_print(player, "You are set to spectate only")
+    
+        handler()
     
     def handle_vote_ended(self, votes, vote, args, passed):
         if vote == "teamsize":
@@ -263,12 +270,21 @@ class queue(minqlx.Plugin):
             except minqlx.NonexistentPlayerError:
                 return
             
-            tag = self.getTag(player)
-            cs = minqlx.parse_variables(value, ordered=True)
-            cs["xcn"] = tag
-            cs["cn"] = tag
-            new_cs = "".join(["\\{}\\{}".format(key, cs[key]) for key in cs])
-            return new_cs
+            if player.steam_id in self._tags:
+                tag = self._tags[player.steam_id]
+                    
+                tag_key = _tag_key.format(player.steam_id)
+                if tag_key in self.db:
+                    if len(tag) > 0:
+                        tag += ' '
+                    tag += self.db[tag_key]
+                    
+                    
+                cs = minqlx.parse_variables(value, ordered=True)
+                cs["xcn"] = tag
+                cs["cn"] = tag
+                new_cs = "".join(["\\{}\\{}".format(key, cs[key]) for key in cs])
+                return new_cs
     
     def handle_new_game(self):
         self.is_endscreen = False
