@@ -49,12 +49,14 @@ class queue(minqlx.Plugin):
         self.add_command("afk", self.cmd_afk)
         self.add_command("here", self.cmd_playing)
         self.add_command("qversion", self.cmd_qversion)
-        self.add_command(("teamsize", "ts"), self.cmd_teamsize, 2, usage="<size>", priority=minqlx.PRI_HIGH)
+        self.add_command(("teamsize", "ts"), self.cmd_teamsize, priority=minqlx.PRI_HIGH)
+        
+        # Commands for debugging
         self.add_command("qpush", self.cmd_qpush, 5)
-        self.add_command("qadd", self.cmd_qadd, 5)
+        self.add_command("qadd", self.cmd_qadd, 5, usage="<size>")
         self.add_command("qupd", self.cmd_qupd, 5)
         
-        self.version = "2.2"
+        self.version = "2.3"
         self._queue = []
         self._afk   = []
         self._tags  = {}
@@ -98,30 +100,33 @@ class queue(minqlx.Plugin):
         @minqlx.next_frame
         def pushToTeam(amount, team):
             '''Safely put certain amout of players to the selected team'''
-            for count, player in enumerate(self._queue):
-                if player in self.teams()['spectator']:
-                    self._queue.pop(0).put(team)
-                else:
-                    self.remFromQueue(player)
-                if count == amount - 1:
-                    self.pushFromQueue()
-                    return
+            if not self.is_endscreen:
+                for count, player in enumerate(self._queue, start=1):
+                    if player in self.teams()['spectator']:
+                        self._queue.pop(0).put(team)
+                    else:
+                        self.remFromQueue(player)
+                    if count == amount:
+                        self.pushFromQueue(0.5)
+                        return
                     
         @minqlx.next_frame
         def pushToBoth(times):
             ### TODO ###
-            while len(self._queue) > 1:
-                if self._queue[0] in self.teams()['spectator']:
-                    if self._queue[1] in self.teams()['spectator']:
+            if len(self._queue) > 1 and not self.is_endscreen:
+                spectators = self.teams()['spectator']
+                if self._queue[0] in spectators:
+                    if self._queue[1] in spectators:
                         self._queue.pop(0).put("red")
                         self._queue.pop(0).put("blue")
                     else:
                         self.remFromQueue(self._queue[1])
                 else:
                     self.remFromQueue(self._queue[0])
-                self.pushFromQueue()
+                self.pushFromQueue(0.5)
         
         time.sleep(delay)
+
         if len(self._queue) == 0:
             return
         if self.game.state != 'in_progress' and self.game.state != 'warmup':
@@ -207,7 +212,7 @@ class queue(minqlx.Plugin):
         self.remAFK(player)
         self.remFromQueue(player)
         self.remTag(player)
-        self.pushFromQueue(0.1)
+        self.pushFromQueue(0.5)
     
     def handle_player_loaded(self, player):
         self.updTag(player)
@@ -217,9 +222,8 @@ class queue(minqlx.Plugin):
             self.remFromQueue(player)
             self.remAFK(player)
         else:
-            self.pushFromQueue()
-            
-        self.updTag(player)
+            self.updTag(player)
+            self.pushFromQueue(0.5)
         
     def handle_team_switch_attempt(self, player, old_team, new_team):
         if new_team != "spectator" and old_team == "spectator":
@@ -234,10 +238,23 @@ class queue(minqlx.Plugin):
         self.pushFromQueue()
                     
     def cmd_qadd(self, player, msg, channel):
-        self.addToQueue(player)
+        if len(msg) < 2:
+            self.addToQueue(player)
+
+        try:
+            i = int(msg[1])
+            target_player = self.player(i)
+            if not (0 <= i < 64) or not target_player:
+                raise ValueError
+        except ValueError:
+            channel.reply("Invalid ID.")
+            return
+            
+        self.addToQueue(target_player)
                     
     def cmd_qupd(self, player, msg, channel):
-        self.updTag(player)
+        for p in self.players:
+            self.updTag(p)
         
     def cmd_qversion(self, player, msg, channel):
         channel.reply('^3This server has ^5queue.py ^6{} ^3ver. installed.'.format(self.version))
@@ -257,8 +274,7 @@ class queue(minqlx.Plugin):
     
     def handle_vote_ended(self, votes, vote, args, passed):
         if vote == "teamsize":
-            time.sleep(4)
-            self.pushFromQueue()
+            self.pushFromQueue(4)
                 
     def handle_configstring(self, index, value):
         if not value:
@@ -331,4 +347,4 @@ class queue(minqlx.Plugin):
         player.tell("^7Your status has been set to ^2AVAILABLE^7.")
     
     def cmd_teamsize(self, playing, msg, channel):
-        self.pushFromQueue(0.1)
+        self.pushFromQueue(0.5)
