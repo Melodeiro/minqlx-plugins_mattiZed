@@ -56,7 +56,7 @@ class queue(minqlx.Plugin):
         self.add_command("qadd", self.cmd_qadd, 5, usage="<size>")
         self.add_command("qupd", self.cmd_qupd, 5)
         
-        self.version = "2.3"
+        self.version = "2.4"
         self._queue = []
         self._afk   = []
         self._tags  = {}
@@ -81,18 +81,21 @@ class queue(minqlx.Plugin):
                 self._queue.insert(pos, player)
                 for p in self._queue:
                     self.updTag(p)
+            for p in self.teams()['spectator']:
+                self.center_print(p, "{} joined the Queue".format(player.name))
         if player in self._queue:
             self.center_print(player, "You are in the queue to play")
         self.updTag(player)
         self.pushFromQueue()
     
-    def remFromQueue(self, player):
+    def remFromQueue(self, player, update=True):
         '''Safely removes player from the queue'''
         if player in self._queue:
             self._queue.remove(player)
         for p in self._queue:
             self.updTag(p)
-        self.updTag(player)
+        if update:
+            self.updTag(player)
     
     @minqlx.thread
     def pushFromQueue(self, delay=0):
@@ -111,7 +114,7 @@ class queue(minqlx.Plugin):
                         return
                     
         @minqlx.next_frame
-        def pushToBoth(times):
+        def pushToBoth():
             ### TODO ###
             if len(self._queue) > 1 and not self.is_endscreen:
                 spectators = self.teams()['spectator']
@@ -134,13 +137,13 @@ class queue(minqlx.Plugin):
         if self.is_endscreen:
             return
             
-        ts = int(self.game.teamsize)
+        maxplayers = self.get_maxplayers()
         teams = self.teams()
         red_amount = len(teams["red"])
         blue_amount = len(teams["blue"])
         free_amount = len(teams["free"])
         
-        #self.msg("DEBUG ts:{} red:{} blue{} free:{}".format(ts, red_amount, blue_amount, free_amount))
+        #self.msg("DEBUG max:{} red:{} blue{} free:{}".format(maxplayers, red_amount, blue_amount, free_amount))
         
         if self.game.type_short in TEAM_BASED_GAMETYPES:
             diff = red_amount - blue_amount
@@ -148,21 +151,23 @@ class queue(minqlx.Plugin):
                 pushToTeam(diff, "blue")
             elif diff < 0:
                 pushToTeam(-diff, "red")
-            elif len(self._queue) > 1 and red_amount < ts:
-                pushToBoth(ts - red_amount) ################ add elo here for those, who want
-            elif self.game.state == 'warmup' and red_amount < ts: # for the case if there is 1 player in queue
-                pushToTeam(1, "red")
+            elif red_amount + blue_amount < maxplayers:
+                if len(self._queue) > 1:
+                    pushToBoth() ################ add elo here for those, who want
+                elif self.game.state == 'warmup': # for the case if there is 1 player in queue
+                    pushToTeam(1, "red")
                 
         elif self.game.type_short in NONTEAM_BASED_GAMETYPES:
-            if free_amount < ts:
-                pushToTeam(ts - free_amount, "free")
+            if free_amount < maxplayers:
+                pushToTeam(maxplayers - free_amount, "free")
     
     @minqlx.thread
-    def remAFK(self, player):
+    def remAFK(self, player, update=True):
         '''Safely removes players from afk list'''
         if player in self._afk:
             self._afk.remove(player)
-            self.updTag(player)
+            if update:
+                self.updTag(player)
     
     def posInQueue(self, player):
         '''Returns position of the player in queue'''
@@ -185,11 +190,15 @@ class queue(minqlx.Plugin):
         if player.steam_id in self._tags:
             del self._tags[player.steam_id]
     
-    @minqlx.thread
+    #@minqlx.thread
     def updTag(self, player):
         '''Update the tags dictionary and start the set_configstring event for tag to apply'''
+        @minqlx.next_frame
+        def upd():
+            if player in self.players():
+                player.clan = player.clan
+        
         if player in self.players():
-                
             addition = ""
             position = self.posInQueue(player)
             if position > -1:
@@ -200,17 +209,26 @@ class queue(minqlx.Plugin):
                 addition = '(s)'
                 
             self._tags[player.steam_id] = addition
-                
-            player.clan = player.clan
+            
+            upd()
     
     @minqlx.next_frame
     def center_print(self, player, message):
-        minqlx.send_server_command(player.id, "cp \"{}\"".format(message))
+        if player in self.players():
+            minqlx.send_server_command(player.id, "cp \"{}\"".format(message))
+            
+    def get_maxplayers(self):
+        maxplayers = int(self.game.teamsize)
+        if self.game.type_short in TEAM_BASED_GAMETYPES:
+            maxplayers = maxplayers * 2
+        if maxplayers == 0:
+            maxplayers = minqlx.get_cvar("sv_maxClients")
+        return maxplayers
     
     ## Plugin Handles and Commands
     def handle_player_disconnect(self, player, reason):
-        self.remAFK(player)
-        self.remFromQueue(player)
+        self.remAFK(player, False)
+        self.remFromQueue(player, False)
         self.remTag(player)
         self.pushFromQueue(0.5)
     
@@ -228,11 +246,11 @@ class queue(minqlx.Plugin):
     def handle_team_switch_attempt(self, player, old_team, new_team):
         if new_team != "spectator" and old_team == "spectator":
             teams = self.teams();
-            if len(teams["red"]) == len(teams["blue"]):
-                if str(len(teams["red"]) + len(teams["free"])) == self.game.teamsize or self.game.state == 'in_progress':
-                    self.remAFK(player)
-                    self.addToQueue(player)
-                    return minqlx.RET_STOP_ALL
+            maxplayers = self.get_maxplayers()
+            if len(teams["red"]) + len(teams["blue"]) == maxplayers or len(teams["free"]) == maxplayers or self.game.state == 'in_progress':
+                self.remAFK(player)
+                self.addToQueue(player)
+                return minqlx.RET_STOP_ALL
                     
     def cmd_qpush(self, player, msg, channel):
         self.pushFromQueue()
@@ -257,7 +275,7 @@ class queue(minqlx.Plugin):
             self.updTag(p)
         
     def cmd_qversion(self, player, msg, channel):
-        channel.reply('^3This server has ^5queue.py ^6{} ^3ver. installed.'.format(self.version))
+        channel.reply('^7This server has installed ^2queue.py {} ^7ver. by ^3Melod^1e^3iro'.format(self.version))
     
     
     
