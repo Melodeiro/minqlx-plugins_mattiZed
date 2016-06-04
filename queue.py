@@ -22,8 +22,10 @@
 
 # Its the alpha state, so any bugs might happen
 
-# For correctly updating the player tags after using !clan, 
-# server needs changed clan.py: http://pastebin.com/3zskZmKb
+# For correctly updating the player tags after using !clan, server needs changed clan.py:
+# https://github.com/Melodeiro/minqlx-plugins_MinoMino/blob/master/clan.py
+# Also you can use the updated version of uneventeams.py, which will put players in queue:
+# https://github.com/Melodeiro/minqlx-plugins_mattiZed/blob/master/uneventeams.py
 
 import minqlx
 import datetime
@@ -36,6 +38,8 @@ _tag_key = "minqlx:players:{}:clantag"
 
 class queue(minqlx.Plugin):
     def __init__(self):
+        self.add_hook("new_game", self.handle_new_game)
+        self.add_hook("game_end", self.handle_game_end)
         self.add_hook("player_loaded", self.handle_player_loaded)
         self.add_hook("player_disconnect", self.handle_player_disconnect)
         self.add_hook("team_switch", self.handle_team_switch)
@@ -43,8 +47,6 @@ class queue(minqlx.Plugin):
         self.add_hook("set_configstring", self.handle_configstring, priority=minqlx.PRI_HIGH)
         self.add_hook("client_command", self.handle_client_command)
         self.add_hook("vote_ended", self.handle_vote_ended)
-        self.add_hook("new_game", self.handle_new_game)
-        self.add_hook("game_end", self.handle_game_end)
         self.add_command(("q", "queue"), self.cmd_lq)
         self.add_command("afk", self.cmd_afk)
         self.add_command("here", self.cmd_playing)
@@ -56,7 +58,7 @@ class queue(minqlx.Plugin):
         self.add_command("qadd", self.cmd_qadd, 5, usage="<size>")
         self.add_command("qupd", self.cmd_qupd, 5)
         
-        self.version = "2.4"
+        self.version = "2.5"
         self._queue = []
         self._afk   = []
         self._tags  = {}
@@ -127,7 +129,34 @@ class queue(minqlx.Plugin):
                 else:
                     self.remFromQueue(self._queue[0])
                 self.pushFromQueue(0.5)
-        
+            
+        @minqlx.next_frame
+        def checkForPlace():
+            maxplayers = self.get_maxplayers()
+            teams = self.teams()
+            red_amount = len(teams["red"])
+            blue_amount = len(teams["blue"])
+            free_amount = len(teams["free"])
+            
+            #self.msg("DEBUG max:{} red:{} blue{} free:{}".format(maxplayers, red_amount, blue_amount, free_amount))
+            
+            if self.game.type_short in TEAM_BASED_GAMETYPES:
+                diff = red_amount - blue_amount
+                if diff > 0:
+                    pushToTeam(diff, "blue")
+                elif diff < 0:
+                    pushToTeam(-diff, "red")
+                elif red_amount + blue_amount < maxplayers:
+                    if len(self._queue) > 1:
+                        pushToBoth() ################ add elo here for those, who want
+                    elif self.game.state == 'warmup': # for the case if there is 1 player in queue
+                        pushToTeam(1, "red")
+                    
+            elif self.game.type_short in NONTEAM_BASED_GAMETYPES:
+                if free_amount < maxplayers:
+                    pushToTeam(maxplayers - free_amount, "free")
+            
+            
         time.sleep(delay)
 
         if len(self._queue) == 0:
@@ -137,29 +166,7 @@ class queue(minqlx.Plugin):
         if self.is_endscreen:
             return
             
-        maxplayers = self.get_maxplayers()
-        teams = self.teams()
-        red_amount = len(teams["red"])
-        blue_amount = len(teams["blue"])
-        free_amount = len(teams["free"])
-        
-        #self.msg("DEBUG max:{} red:{} blue{} free:{}".format(maxplayers, red_amount, blue_amount, free_amount))
-        
-        if self.game.type_short in TEAM_BASED_GAMETYPES:
-            diff = red_amount - blue_amount
-            if diff > 0:
-                pushToTeam(diff, "blue")
-            elif diff < 0:
-                pushToTeam(-diff, "red")
-            elif red_amount + blue_amount < maxplayers:
-                if len(self._queue) > 1:
-                    pushToBoth() ################ add elo here for those, who want
-                elif self.game.state == 'warmup': # for the case if there is 1 player in queue
-                    pushToTeam(1, "red")
-                
-        elif self.game.type_short in NONTEAM_BASED_GAMETYPES:
-            if free_amount < maxplayers:
-                pushToTeam(maxplayers - free_amount, "free")
+        checkForPlace()
     
     @minqlx.thread
     def remAFK(self, player, update=True):
@@ -247,7 +254,7 @@ class queue(minqlx.Plugin):
         if new_team != "spectator" and old_team == "spectator":
             teams = self.teams();
             maxplayers = self.get_maxplayers()
-            if len(teams["red"]) + len(teams["blue"]) == maxplayers or len(teams["free"]) == maxplayers or self.game.state == 'in_progress':
+            if len(teams["red"]) + len(teams["blue"]) == maxplayers or len(teams["free"]) == maxplayers or self.game.state == 'in_progress' or len(self._queue) > 0:
                 self.remAFK(player)
                 self.addToQueue(player)
                 return minqlx.RET_STOP_ALL
