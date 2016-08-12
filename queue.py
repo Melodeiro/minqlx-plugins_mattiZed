@@ -47,6 +47,7 @@ class queue(minqlx.Plugin):
         self.add_hook("set_configstring", self.handle_configstring, priority=minqlx.PRI_HIGH)
         self.add_hook("client_command", self.handle_client_command)
         self.add_hook("vote_ended", self.handle_vote_ended)
+        self.add_hook("console_print", self.handle_console_print)
         self.add_command(("q", "queue"), self.cmd_lq)
         self.add_command("afk", self.cmd_afk)
         self.add_command("here", self.cmd_playing)
@@ -55,14 +56,18 @@ class queue(minqlx.Plugin):
         
         # Commands for debugging
         self.add_command("qpush", self.cmd_qpush, 5)
-        self.add_command("qadd", self.cmd_qadd, 5, usage="<size>")
+        self.add_command("qadd", self.cmd_qadd, 5, usage="<id>")
         self.add_command("qupd", self.cmd_qupd, 5)
         
-        self.version = "2.5"
+        self.version = "2.6"
+        self.plugin_updater_url = "https://raw.githubusercontent.com/Melodeiro/minqlx-plugins_mattiZed/master/queue.py"
         self._queue = []
         self._afk   = []
         self._tags  = {}
         self.initialize()
+        self.is_red_locked = False
+        self.is_blue_locked = False
+        self.is_push_pending = False
         self.is_endscreen = False ######## TODO: replace for something better, because 
                                   ######## loading during the endgame screen might cause bugs
         self.set_cvar_once("qlx_queueSetAfkPermission", "2")
@@ -71,6 +76,7 @@ class queue(minqlx.Plugin):
     def initialize(self):
         for p in self.players():
             self.updTag(p)
+        self.unlock()
     
     ## Basic List Handling (Queue and AFK)
     @minqlx.thread
@@ -138,26 +144,33 @@ class queue(minqlx.Plugin):
             blue_amount = len(teams["blue"])
             free_amount = len(teams["free"])
             
-            #self.msg("DEBUG max:{} red:{} blue{} free:{}".format(maxplayers, red_amount, blue_amount, free_amount))
+            #self.msg("DEBUG max:{} ts:{} red:{} blue{} free:{}".format(maxplayers, self.game.teamsize, red_amount, blue_amount, free_amount))
             
             if self.game.type_short in TEAM_BASED_GAMETYPES:
                 diff = red_amount - blue_amount
-                if diff > 0:
+                if diff > 0 and not self.is_blue_locked:
                     pushToTeam(diff, "blue")
-                elif diff < 0:
+                elif diff < 0 and not self.is_red_locked:
                     pushToTeam(-diff, "red")
                 elif red_amount + blue_amount < maxplayers:
-                    if len(self._queue) > 1:
+                    if len(self._queue) > 1 and not self.is_blue_locked and not self.is_red_locked:
                         pushToBoth() ################ add elo here for those, who want
                     elif self.game.state == 'warmup': # for the case if there is 1 player in queue
-                        pushToTeam(1, "red")
+                        if not self.is_red_locked and red_amount < int(self.game.teamsize):
+                            pushToTeam(1, "red")
+                        elif not self.is_blue_locked and blue_amount < int(self.game.teamsize):
+                            pushToTeam(1, "blue")
                     
             elif self.game.type_short in NONTEAM_BASED_GAMETYPES:
                 if free_amount < maxplayers:
                     pushToTeam(maxplayers - free_amount, "free")
-            
-            
+        
+        
+        if self.is_push_pending:
+            return
+        self.is_push_pending = True
         time.sleep(delay)
+        self.is_push_pending = False
 
         if len(self._queue) == 0:
             return
@@ -208,10 +221,13 @@ class queue(minqlx.Plugin):
         if player in self.players():
             addition = ""
             position = self.posInQueue(player)
+            
             if position > -1:
                 addition = '({})'.format(position + 1)
             elif player in self._afk:
                 addition = '({})'.format(self.get_cvar("qlx_queueAFKTag"))
+            elif self.game.type_short not in TEAM_BASED_GAMETYPES + NONTEAM_BASED_GAMETYPES:
+                addition = ""
             elif player in self.teams()['spectator']:
                 addition = '(s)'
                 
@@ -251,10 +267,13 @@ class queue(minqlx.Plugin):
             self.pushFromQueue(0.5)
         
     def handle_team_switch_attempt(self, player, old_team, new_team):
+        if self.game.type_short not in TEAM_BASED_GAMETYPES + NONTEAM_BASED_GAMETYPES:
+            return
+            
         if new_team != "spectator" and old_team == "spectator":
             teams = self.teams();
             maxplayers = self.get_maxplayers()
-            if len(teams["red"]) + len(teams["blue"]) == maxplayers or len(teams["free"]) == maxplayers or self.game.state == 'in_progress' or len(self._queue) > 0:
+            if len(teams["red"]) + len(teams["blue"]) == maxplayers or len(teams["free"]) == maxplayers or self.game.state == 'in_progress' or len(self._queue) > 0 or self.is_red_locked or self.is_blue_locked:
                 self.remAFK(player)
                 self.addToQueue(player)
                 return minqlx.RET_STOP_ALL
@@ -278,13 +297,11 @@ class queue(minqlx.Plugin):
         self.addToQueue(target_player)
                     
     def cmd_qupd(self, player, msg, channel):
-        for p in self.players:
+        for p in self.players():
             self.updTag(p)
         
     def cmd_qversion(self, player, msg, channel):
         channel.reply('^7This server has installed ^2queue.py {} ^7ver. by ^3Melod^1e^3iro'.format(self.version))
-    
-    
     
     def handle_client_command(self, player, command):
         @minqlx.thread
@@ -294,7 +311,6 @@ class queue(minqlx.Plugin):
                     self.remFromQueue(player)
                     if player not in self._queue:
                         self.center_print(player, "You are set to spectate only")
-    
         handler()
     
     def handle_vote_ended(self, votes, vote, args, passed):
@@ -329,7 +345,15 @@ class queue(minqlx.Plugin):
     
     def handle_new_game(self):
         self.is_endscreen = False
-        self.pushFromQueue()
+        self.is_red_locked = False
+        self.is_blue_locked = False
+        
+        if self.game.type_short not in TEAM_BASED_GAMETYPES + NONTEAM_BASED_GAMETYPES:
+            self._queue = []
+            for p in self.players():
+                self.updTag(p)
+        else:
+            self.pushFromQueue()
         
     def handle_game_end(self, data):
         self.is_endscreen = True
@@ -373,3 +397,15 @@ class queue(minqlx.Plugin):
     
     def cmd_teamsize(self, playing, msg, channel):
         self.pushFromQueue(0.5)
+    
+    def handle_console_print(self, text):
+        if text.find('broadcast: print "The RED team is now locked') != -1:
+            self.is_red_locked = True
+        elif text.find('broadcast: print "The BLUE team is now locked') != -1:
+            self.is_blue_locked = True
+        elif text.find('broadcast: print "The RED team is now unlocked') != -1:
+            self.is_red_locked = False
+            self.pushFromQueue(0.5) ################ if cause errors maybe call that in next_frame
+        elif text.find('broadcast: print "The BLUE team is now unlocked') != -1:
+            self.is_blue_locked = False
+            self.pushFromQueue(0.5)
