@@ -59,7 +59,7 @@ class queue(minqlx.Plugin):
         self.add_command("qadd", self.cmd_qadd, 5, usage="<id>")
         self.add_command("qupd", self.cmd_qupd, 5)
         
-        self.version = "2.6"
+        self.version = "2.6.1"
         self.plugin_updater_url = "https://raw.githubusercontent.com/Melodeiro/minqlx-plugins_mattiZed/master/queue.py"
         self._queue = []
         self._afk   = []
@@ -245,7 +245,7 @@ class queue(minqlx.Plugin):
         if self.game.type_short in TEAM_BASED_GAMETYPES:
             maxplayers = maxplayers * 2
         if maxplayers == 0:
-            maxplayers = minqlx.get_cvar("sv_maxClients", int)
+            maxplayers = self.get_cvar("sv_maxClients", int)
         return maxplayers
     
     ## Plugin Handles and Commands
