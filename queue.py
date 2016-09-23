@@ -245,7 +245,7 @@ class queue(minqlx.Plugin):
         if self.game.type_short in TEAM_BASED_GAMETYPES:
             maxplayers = maxplayers * 2
         if maxplayers == 0:
-            maxplayers = minqlx.get_cvar("sv_maxClients")
+            maxplayers = minqlx.get_cvar("sv_maxClients", int)
         return maxplayers
     
     ## Plugin Handles and Commands
