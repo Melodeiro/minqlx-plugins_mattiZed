@@ -59,7 +59,7 @@ class queue(minqlx.Plugin):
         self.add_command("qadd", self.cmd_qadd, 5, usage="<id>")
         self.add_command("qupd", self.cmd_qupd, 5)
         
-        self.version = "2.6.1"
+        self.version = "2.6.2"
         self.plugin_updater_url = "https://raw.githubusercontent.com/Melodeiro/minqlx-plugins_mattiZed/master/queue.py"
         self._queue = []
         self._afk   = []
@@ -293,6 +293,9 @@ class queue(minqlx.Plugin):
         except ValueError:
             channel.reply("Invalid ID.")
             return
+        except minqlx.NonexistentPlayerError:
+            channel.reply("Invalid client ID.")
+            return
             
         self.addToQueue(target_player)
                     
@@ -378,12 +381,23 @@ class queue(minqlx.Plugin):
     def cmd_afk(self, player, msg, channel):
         if len(msg) > 1:
             if self.db.has_permission(player, self.get_cvar("qlx_queueSetAfkPermission", int)):
-                guy = self.find_player(msg[1])[0]
-                if self.setAFK(guy):
-                    player.tell("^7Status for {} has been set to ^3AFK^7.".format(guy.name))
+                try:
+                    i = int(msg[1])
+                    target_player = self.player(i)
+                    if not (0 <= i < 64) or not target_player:
+                        raise ValueError
+                except ValueError:
+                    channel.reply("Invalid ID.")
+                    return
+                except minqlx.NonexistentPlayerError:
+                    channel.reply("Invalid client ID.")
+                    return
+                
+                if self.setAFK(target_player):
+                    player.tell("^7Status for {} has been set to ^3AFK^7.".format(target_player.name))
                     return minqlx.RET_STOP_ALL
                 else:
-                    player.tell("Couldn't set status for {} to AFK.".format(guy.name))
+                    player.tell("Couldn't set status for {} to AFK.".format(target_player.name))
                     return minqlx.RET_STOP_ALL
         if self.setAFK(player):
             player.tell("^7Your status has been set to ^3AFK^7.")
