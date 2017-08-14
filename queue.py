@@ -2,8 +2,8 @@
 # Copyright (C) 2016 mattiZed (github) aka mattiZed (ql)
 # Copyright (C) 2016 Melodeiro (github)
 
-# You can redistribute it and/or modify it under the terms of the 
-# GNU General Public License as published by the Free Software Foundation, 
+# You can redistribute it and/or modify it under the terms of the
+# GNU General Public License as published by the Free Software Foundation,
 # either version 3 of the License, or (at your option) any later version.
 
 # You should have received a copy of the GNU General Public License
@@ -15,9 +15,8 @@
 
 # The plugin put players to the queue when teams are full or even if match in progress.
 # When more players adding or there is the place for someone, guys from queue putting to the game.
-# 
 
-# The plugin also features an AFK list, to which players can 
+# The plugin also features an AFK list, to which players can
 # subscribe/unsubscribe to.
 
 # Its the alpha state, so any bugs might happen
@@ -28,13 +27,13 @@
 # https://github.com/Melodeiro/minqlx-plugins_mattiZed/blob/master/uneventeams.py
 
 import minqlx
-import datetime
 import time
 import threading
 
 TEAM_BASED_GAMETYPES = ("ca", "ctf", "dom", "ft", "tdm", "ad", "1f", "har")
 NONTEAM_BASED_GAMETYPES = ("ffa", "race", "rr")
 _tag_key = "minqlx:players:{}:clantag"
+
 
 class queue(minqlx.Plugin):
     def __init__(self):
@@ -53,26 +52,28 @@ class queue(minqlx.Plugin):
         self.add_command("here", self.cmd_playing)
         self.add_command("qversion", self.cmd_qversion)
         self.add_command(("teamsize", "ts"), self.cmd_teamsize, priority=minqlx.PRI_HIGH)
-        
+
         # Commands for debugging
         self.add_command("qpush", self.cmd_qpush, 5)
         self.add_command("qadd", self.cmd_qadd, 5, usage="<id>")
         self.add_command("qupd", self.cmd_qupd, 5)
-        
-        self.version = "2.6.2"
+
+        self.version = "2.7"
         self.plugin_updater_url = "https://raw.githubusercontent.com/Melodeiro/minqlx-plugins_mattiZed/master/queue.py"
         self._queue = []
-        self._afk   = []
-        self._tags  = {}
+        self._afk = []
+        self._tags = {}
         self.initialize()
         self.is_red_locked = False
         self.is_blue_locked = False
         self.is_push_pending = False
-        self.is_endscreen = False ######## TODO: replace for something better, because 
+        self.is_endscreen = False ######## TODO: replace for something better, because
                                   ######## loading during the endgame screen might cause bugs
         self.set_cvar_once("qlx_queueSetAfkPermission", "2")
         self.set_cvar_once("qlx_queueAFKTag", "^3AFK")
-    
+
+        self.test_logger = minqlx.get_logger()
+
     def initialize(self):
         for p in self.players():
             self.updTag(p)
@@ -99,6 +100,7 @@ class queue(minqlx.Plugin):
     def remFromQueue(self, player, update=True):
         '''Safely removes player from the queue'''
         if player in self._queue:
+            #self.test_logger.warning("removing {} from queue".format(player))
             self._queue.remove(player)
         for p in self._queue:
             self.updTag(p)
@@ -113,26 +115,29 @@ class queue(minqlx.Plugin):
             '''Safely put certain amout of players to the selected team'''
             if not self.is_endscreen:
                 for count, player in enumerate(self._queue, start=1):
-                    if player in self.teams()['spectator']:
+                    if player in self.teams()['spectator'] and player.connection_state == 'active':
+                        #self.test_logger.warning("pop out {}".format(player))
                         self._queue.pop(0).put(team)
-                    else:
+                    elif player.connection_state not in ['connected', 'primed']:
                         self.remFromQueue(player)
                     if count == amount:
                         self.pushFromQueue(0.5)
                         return
-                    
+                        
         @minqlx.next_frame
         def pushToBoth():
             ### TODO ###
             if len(self._queue) > 1 and not self.is_endscreen:
                 spectators = self.teams()['spectator']
-                if self._queue[0] in spectators:
-                    if self._queue[1] in spectators:
+                if self._queue[0] in spectators and self._queue[0].connection_state == 'active':
+                    if self._queue[1] in spectators and self._queue[1].connection_state == 'active':
+                        #self.test_logger.warning("pop out {}".format(self._queue[0]))
                         self._queue.pop(0).put("red")
+                        #self.test_logger.warning("pop out {}".format(self._queue[0]))
                         self._queue.pop(0).put("blue")
-                    else:
+                    elif self._queue[1].connection_state not in ['connected', 'primed']:
                         self.remFromQueue(self._queue[1])
-                else:
+                elif self._queue[0].connection_state not in ['connected', 'primed']:
                     self.remFromQueue(self._queue[0])
                 self.pushFromQueue(0.5)
             
@@ -245,7 +250,7 @@ class queue(minqlx.Plugin):
         if self.game.type_short in TEAM_BASED_GAMETYPES:
             maxplayers = maxplayers * 2
         if maxplayers == 0:
-            maxplayers = self.get_cvar("sv_maxClients", int)
+            maxplayers = minqlx.get_cvar("sv_maxClients", int)
         return maxplayers
     
     ## Plugin Handles and Commands
@@ -292,9 +297,6 @@ class queue(minqlx.Plugin):
                 raise ValueError
         except ValueError:
             channel.reply("Invalid ID.")
-            return
-        except minqlx.NonexistentPlayerError:
-            channel.reply("Invalid client ID.")
             return
             
         self.addToQueue(target_player)
@@ -352,6 +354,7 @@ class queue(minqlx.Plugin):
         self.is_blue_locked = False
         
         if self.game.type_short not in TEAM_BASED_GAMETYPES + NONTEAM_BASED_GAMETYPES:
+            #self.test_logger.warning("Emptying queue")
             self._queue = []
             for p in self.players():
                 self.updTag(p)
@@ -381,23 +384,12 @@ class queue(minqlx.Plugin):
     def cmd_afk(self, player, msg, channel):
         if len(msg) > 1:
             if self.db.has_permission(player, self.get_cvar("qlx_queueSetAfkPermission", int)):
-                try:
-                    i = int(msg[1])
-                    target_player = self.player(i)
-                    if not (0 <= i < 64) or not target_player:
-                        raise ValueError
-                except ValueError:
-                    channel.reply("Invalid ID.")
-                    return
-                except minqlx.NonexistentPlayerError:
-                    channel.reply("Invalid client ID.")
-                    return
-                
-                if self.setAFK(target_player):
-                    player.tell("^7Status for {} has been set to ^3AFK^7.".format(target_player.name))
+                guy = self.find_player(msg[1])[0]
+                if self.setAFK(guy):
+                    player.tell("^7Status for {} has been set to ^3AFK^7.".format(guy.name))
                     return minqlx.RET_STOP_ALL
                 else:
-                    player.tell("Couldn't set status for {} to AFK.".format(target_player.name))
+                    player.tell("Couldn't set status for {} to AFK.".format(guy.name))
                     return minqlx.RET_STOP_ALL
         if self.setAFK(player):
             player.tell("^7Your status has been set to ^3AFK^7.")
