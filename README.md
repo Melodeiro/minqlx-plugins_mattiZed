@@ -1,20 +1,18 @@
 # minqlx-plugins
 This is a collection of plugins that I wrote for Mino's Quake Live Server Mod [minqlx](https://github.com/MinoMino/minqlx). If you run into problems or find any bugs, you can contact me via IRC: [Mino's Channel on Quakenet](http://webchat.quakenet.org/?channels=minqlbot). Look out for "mattiZed" - I may not respond immediately but I will sure read your messages.
 
-Recent versions of queue.py and uneventeams.py are supported by Melodeiro#6341 at Discord, or post your messages at the [SAM support channel](https://discordapp.com/channels/163619179923111937/166341692792766466), or just use [this form](https://github.com/Melodeiro/minqlx-plugins_mattiZed/issues/new) to create a github issue.
+Recent versions of queue.py and uneventeams.py are supported by Melodeiro#6341 at Discord, or just use [this form](https://github.com/Melodeiro/minqlx-plugins_mattiZed/issues/new) to create a github issue.
 
 ## queue.py
 This is a queue plugin. Originally written by [mattiZed](https://github.com/mattiZed/minqlx-plugins), now with a whole different mechanics, which should fully replace the old one.
 
-From 2.0 version this plugin implements duel-style queue into the all gametypes. Players receive a status, which is displayed in a round brackets: (s) - spectating, (1..2..n) - position in queue, (AFK) - afk status. For team-based gametypes plugin waits for 2 players before adding them into the game in progress. Also players being added to queue if there is no place in game (due teamsize or locked teams)
+From 2.0 version this plugin implements duel-like queue into the all gametypes. Players receive a status, which is displayed in a round brackets: (s) - spectating, (1..2..n) - position in queue, (AFK) - afk status. For team-based gametypes plugin waits for 2 players before adding them into the game in progress. Also players will be added to queue if there is no place in game (due teamsize or locked teams)
 
 * **qlx_queueSetAfkPermission "2"** - minimum permission level for setting afk status to other players
 * **qlx_queueAFKTag "^3AFK"** - tag used for the afk status
 * **!q** - show all players from queue
 * **!afk** - set your status to AFK (spectators only)
 * **!here** - remove your AFK status
-
-**NOTE:** for correctly updating the player tags after using the !clan, use the [modified clan.py plugin](https://github.com/Melodeiro/minqlx-plugins_MinoMino/blob/master/clan.py)
 
 ## pummel.py
 This is a fun plugin.
